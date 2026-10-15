@@ -24,6 +24,8 @@ def diagnostic_code(exc):
     message=str(exc).lower()
     state=getattr(exc,'sqlstate',None)
     if state in ('28P01','28000') or any(x in message for x in ('password authentication failed','authentication failed','no password supplied')):return 'DB_AUTH'
+    if 'channel binding' in message:return 'DB_TLS_CHANNEL_BINDING'
+    if 'certificate verify failed' in message:return 'DB_TLS_CERTIFICATE'
     if any(x in message for x in ('certificate verify failed','root certificate','sslrootcert','ssl error','ssl is not enabled','channel binding')):return 'DB_TLS'
     if any(x in message for x in ('could not translate host','name or service not known','failed to resolve','nodename nor servname')):return 'DB_DNS'
     if state in ('57014','55P03') or 'timeout' in message or 'timed out' in message:return 'DB_TIMEOUT'
@@ -50,8 +52,11 @@ def connection():
             import psycopg
             kwargs={'connect_timeout':15,'prepare_threshold':None,'application_name':'researchlens-quotas'}
             if config.PUBLIC:
-                # Use the platform trust store and verify the server identity.
-                kwargs.update(sslmode='verify-full',sslrootcert='system')
+                # psycopg[binary] bundles OpenSSL; its default CA path may be empty.
+                # Requests already installs certifi. Use that explicit CA bundle,
+                # retaining both chain and hostname verification; never fall back.
+                import certifi
+                kwargs.update(sslmode='verify-full',sslrootcert=certifi.where())
             with psycopg.connect(config.DATABASE_URL,**kwargs) as conn:
                 conn.execute("SET LOCAL statement_timeout = '5s'")
                 conn.execute("SET LOCAL lock_timeout = '4s'")
