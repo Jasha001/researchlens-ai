@@ -5,7 +5,8 @@ This serializes small quota updates across connections/processes; no transaction
 or connection survives a provider call. Never fall back to ephemeral quotas.
 """
 from contextlib import contextmanager
-import sqlite3
+import sqlite3,logging
+from urllib.parse import urlsplit
 from fastapi import HTTPException
 import config
 
@@ -18,10 +19,34 @@ class PostgresAdapter:
     def executemany(self,sql,rows):
         with self.conn.cursor() as cur:cur.executemany(sql.replace('?','%s'),rows)
 
+def diagnostic_code(exc):
+    # Match provider details privately; emit only fixed, non-sensitive categories.
+    message=str(exc).lower()
+    state=getattr(exc,'sqlstate',None)
+    if state in ('28P01','28000') or any(x in message for x in ('password authentication failed','authentication failed','no password supplied')):return 'DB_AUTH'
+    if any(x in message for x in ('certificate verify failed','root certificate','sslrootcert','ssl error','ssl is not enabled','channel binding')):return 'DB_TLS'
+    if any(x in message for x in ('could not translate host','name or service not known','failed to resolve','nodename nor servname')):return 'DB_DNS'
+    if state in ('57014','55P03') or 'timeout' in message or 'timed out' in message:return 'DB_TIMEOUT'
+    if state=='42501' or 'permission denied' in message:return 'DB_PERMISSION'
+    if state=='3D000' or 'database does not exist' in message:return 'DB_NAME'
+    if any(x in message for x in ('invalid connection option','missing "="','invalid uri','invalid percent-encoded','invalid port')):return 'DB_URL_FORMAT'
+    if state and state.startswith('42'):return 'DB_SCHEMA'
+    return 'DB_UNAVAILABLE'
+
 @contextmanager
 def connection():
     try:
         if config.DATABASE_URL:
+            # Reject copied shell snippets, unexpanded passwords and outer quotes.
+            value=config.DATABASE_URL
+            if not value.startswith(('postgresql://','postgres://')) or any(c in value for c in ('\n','\r')):
+                raise HTTPException(503,'Database configuration needs a connection URL only. Code: DB_URL_FORMAT')
+            try:
+                parsed=urlsplit(value)
+                if not parsed.hostname or not parsed.username or not parsed.password or parsed.path in ('','/') or parsed.fragment or any(c in value for c in ('<password>','[YOUR-PASSWORD]')):raise ValueError()
+                parsed.port
+            except ValueError:
+                raise HTTPException(503,'Database connection URL is incomplete or malformed. Code: DB_URL_FORMAT') from None
             import psycopg
             kwargs={'connect_timeout':15,'prepare_threshold':None,'application_name':'researchlens-quotas'}
             if config.PUBLIC:
@@ -43,6 +68,8 @@ def connection():
                 with conn:yield conn
             finally:conn.close()
     except HTTPException:raise
-    except Exception:
+    except Exception as exc:
+        code=diagnostic_code(exc)
+        logging.getLogger('uvicorn.error').error('Quota storage failure: %s',code)
         # No DSN, database password, SQL or provider response in client errors.
-        raise HTTPException(503,'Usage storage is temporarily unavailable. Retry shortly; AI access is paused.') from None
+        raise HTTPException(503,'Usage storage is temporarily unavailable. Retry shortly; AI access is paused. Code: '+code) from None
