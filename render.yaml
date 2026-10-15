@@ -1,3 +1,4 @@
+# Public access: visitors verify with Turnstile; no invite code.
 # Deploy this repository as a Blueprint. Only a free web service is defined.
 # DATABASE_URL must come from a separate Neon FREE project, not Render's expiring free database.
 services:
@@ -12,7 +13,7 @@ services:
       - key: PUBLIC_MODE
         value: 'true'
       - key: BETA_INVITE_ONLY
-        value: 'true'
+        value: 'false'
       - key: FREE_HOST_MODE
         value: 'true'
       - key: AI_PROVIDER
@@ -26,6 +27,10 @@ services:
       - key: SESSION_SECRET
         generateValue: true
       - key: SITE_ACCESS_CODE
+        value: ''
+      - key: TURNSTILE_SITE_KEY
+        sync: false
+      - key: TURNSTILE_SECRET_KEY
         sync: false
       - key: PRIVACY_CONTACT
         sync: false
