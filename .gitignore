@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+runtime/
+backend/.venv*/
+frontend/node_modules/
+**/__pycache__/
+**/.pytest_cache/
+
+.env.public

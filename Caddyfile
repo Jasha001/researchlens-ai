@@ -1,0 +1,12 @@
+{$PUBLIC_HOST} {
+    request_body {
+        max_size 12MB
+    }
+    reverse_proxy researchlens:8182 {
+        transport http {
+            response_header_timeout 150s
+            keepalive off
+        }
+    }
+    # Access logging is off; do not enable request-body/credential logging.
+}
